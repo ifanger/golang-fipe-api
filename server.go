@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/goodsign/monday"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -18,6 +21,7 @@ type TableReference struct {
 
 func main() {
 	port := 8080
+	currentMonth := monday.Format(time.Now(), "January/2006", monday.LocalePtBR)
 
 	fmt.Printf("Starting server at %d\n", port)
 
@@ -34,8 +38,6 @@ func main() {
 	}
 
 	http.HandleFunc("/reference-table", func(w http.ResponseWriter, r *http.Request) {
-		currentMonth := time.Now().Format("janeiro/2006")
-
 		var codigo int
 		var mes string
 		err = db.QueryRow("SELECT codigo, mes FROM fipe_tables WHERE mes = ?", currentMonth).Scan(&codigo, &mes)
@@ -46,8 +48,12 @@ func main() {
 		}
 
 		if codigo > 0 {
+			fmt.Printf("Current month %s was found on cache\n", currentMonth)
 			json.NewEncoder(w).Encode(codigo)
+			return
 		}
+
+		fmt.Printf("Current month %s not found on cache, fetching...\n", currentMonth)
 
 		if r.Method != "GET" {
 			http.Error(w, "Invalid request method.", http.StatusMethodNotAllowed)
@@ -85,13 +91,24 @@ func main() {
 		var tableReferences []TableReference
 		json.Unmarshal(responseBody, &tableReferences)
 
-		var latestTable = tableReferences[0]
+		latestMonth := formatMonth(tableReferences[0].Month)
+		latestCode := tableReferences[0].Code
 
-		fmt.Printf("Latest : %+v", latestTable.Code)
-		json.NewEncoder(w).Encode(latestTable.Code)
+		fmt.Printf("Inserting into database %d %s\n", latestCode, latestMonth)
+		_, err = db.Exec("INSERT INTO fipe_tables (codigo, mes) VALUES (?, ?)", latestCode, latestMonth)
+
+		if err != nil {
+			fmt.Printf("Failed to insert into database %s\n", err)
+		}
+
+		json.NewEncoder(w).Encode(latestCode)
 
 		defer response.Body.Close()
 	})
 
 	http.ListenAndServe(":8080", nil)
+}
+
+func formatMonth(month string) string {
+	return strings.Trim(strings.ToLower(month), " ")
 }
